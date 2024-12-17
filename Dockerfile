@@ -1,0 +1,67 @@
+# build stage for building .ts files
+FROM node:22-alpine as build
+
+RUN mkdir /home/app
+
+WORKDIR /home/app
+
+COPY package.json .
+
+RUN npm install --ignore-scripts
+
+COPY . .
+
+RUN npm run build
+
+# prod stage for including only necessary files
+FROM node:22-alpine as prod
+
+LABEL org.opencontainers.image.source=https://github.com/ghoshRitesh12/aniwatch-api
+LABEL org.opencontainers.image.description="Node.js API for obtaining anime information from hianime.to (formerly aniwatch.to)"
+LABEL org.opencontainers.image.licenses=MIT
+
+# set env or puppeteer
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH="/usr/bin/chromium-browser"
+
+# install deps and chromium
+RUN apk add chromium
+
+# create a non-privileged user
+RUN addgroup -S aniwatch && adduser -S zoro -G aniwatch
+
+# set secure folder permissions
+RUN mkdir -p /app/public /app/dist && chown -R zoro:aniwatch /app
+
+# set non-privileged user
+USER zoro
+
+# set working directory
+WORKDIR /app
+
+# copy config file for better use of layers
+COPY --chown=zoro:aniwatch package.json .
+
+# install dependencies
+RUN npm install --omit=dev --ignore-scripts
+
+# copy public folder from build stage to prod
+COPY --from=build --chown=zoro:aniwatch /home/app/public /app/public
+
+# copy dist folder from build stage to prod
+COPY --from=build --chown=zoro:aniwatch /home/app/dist /app/dist
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s CMD [ "npm", "run", "healthcheck" ]
+
+ENV NODE_ENV=production
+ENV PORT=4000
+
+ENV ANIWATCH_API_CORS_ALLOWED_ORIGINS=http://localhost:5173
+
+# exposed port
+EXPOSE 4000
+
+CMD [ "node", "dist/src/server.js" ]
+
+# exit
